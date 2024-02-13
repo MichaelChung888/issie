@@ -703,7 +703,7 @@ let flipBlock (compList:ComponentId list) (model:SymbolT.Model) (flip:FlipType) 
 let postUpdateScalingBox (model:SheetT.Model, cmd) = 
     
     let symbolCmd (msg: SymbolT.Msg) = Elmish.Cmd.ofMsg (ModelType.Msg.Sheet (SheetT.Wire (BusWireT.Symbol msg)))
-    let sheetCmd (msg: SheetT.Msg) = Elmish.Cmd.ofMsg (ModelType.Msg.Sheet msg)
+    let                                                                                                                                                                               Cmd (msg: SheetT.Msg) = Elmish.Cmd.ofMsg (ModelType.Msg.Sheet msg)
 
     if (model.SelectedComponents.Length < 2) then 
         match model.ScalingBox with 

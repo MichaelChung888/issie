@@ -17,15 +17,15 @@ open BlockHelpers
 let snapIndicatorLine = 
     {Stroke = "Red"; StrokeWidth = "1px"; StrokeDashArray = "5, 5" }   
 
-let snapLineHorizontal wholeCanvas y = makeLine 0. y wholeCanvas y  snapIndicatorLine
-let snapLineVertical wholeCanvas x = makeLine x 0. x wholeCanvas snapIndicatorLine
+let snapLineHorizontal wholeCanvas y = makeLine 0. y wholeCanvas y snapIndicatorLine // line from (0, y) to (canvasWidth, y) (horizontal)
+let snapLineVertical wholeCanvas x = makeLine x 0. x wholeCanvas snapIndicatorLine // line from (x, 0) to (x, canvasHeight) (vertical)
 
 /// a vertical line marking the position of the current symbol or segment snap, if one exists
 let snapIndicatorLineX model wholeCanvas =
     match model.SnapSymbols.SnapX.SnapOpt, model.SnapSegments.SnapX.SnapOpt with
     | Some snap, _
     | None, Some snap ->
-        [ makeLine snap.SnapIndicatorPos 0.0 snap.SnapIndicatorPos wholeCanvas snapIndicatorLine ]
+        [ makeLine snap.SnapIndicatorPos 0.0 snap.SnapIndicatorPos wholeCanvas snapIndicatorLine ] // Same vertical line but at x=snap.SnapIndicatorPos
     | None, None ->
         []
 
@@ -34,7 +34,7 @@ let snapIndicatorLineY model wholeCanvas =
     match model.SnapSymbols.SnapY.SnapOpt, model.SnapSegments.SnapY.SnapOpt with
     | Some snap, _
     | None, Some snap ->
-        [ makeLine 0. snap.SnapIndicatorPos wholeCanvas snap.SnapIndicatorPos  snapIndicatorLine ]
+        [ makeLine 0. snap.SnapIndicatorPos wholeCanvas snap.SnapIndicatorPos  snapIndicatorLine ] // Same horizontal line but at y=snap.SnapIndicatorPos
     | None, None ->
         []
 
@@ -53,13 +53,13 @@ let makeSnapBounds
         (limit:float) 
         (points: {|Pos: float; IndicatorPos:float|} array) 
             : SnapData array =
-    let points = points |> Array.sortBy (fun pt -> pt.Pos)
+    let points = points |> Array.sortBy (fun pt -> pt.Pos) // Sort all snapping points by its position (can be (x or y) for (vertical or horizontal) )
     points
-    |> Array.mapi (fun i point -> 
-        let (xBefore, xAfter) = Array.tryItem (i - 1) points, Array.tryItem (i + 1) points
+    |> Array.mapi (fun i point -> // For each snapping point ...
+        let (xBefore, xAfter) = Array.tryItem (i - 1) points, Array.tryItem (i + 1) points // get xb(efore) and xa(fter) points
         let lower = 
             xBefore
-            |> Option.map (fun xb -> max ((point.Pos + xb.Pos)/2.) (point.Pos - limit))
+            |> Option.map (fun xb -> max ((point.Pos + xb.Pos)/2.) (point.Pos - limit)) 
             |> Option.defaultValue (point.Pos - limit)
         let upper = 
              xAfter
@@ -152,7 +152,7 @@ let getNewSymbolSnapInfo
     /// xOrY: which coordinate is processed.
     /// create snap points on the centre of each other same type symbol
     /// this will align (same type) symbol centres with centres.
-    let otherSimilarSymbolData (xOrY: XYPos -> float) = 
+    let otherSimilarSymbolData (xOrY: XYPos -> float) = // Finds all the other symbol centers that are of same type as movingSymbol
         let movingSymbolMatch = symbolMatch movingSymbol
         Map.values model.Wire.Symbol.Symbols 
         |> Seq.filter (fun (sym:SymbolT.Symbol) -> 
@@ -167,11 +167,13 @@ let getNewSymbolSnapInfo
     /// if so add a snap when the two port locations are at same level (on line perpendicular to edges).
     /// This snap will snap symbol movement to no wire kink on connecting 3 segment wires.
     let portSnapData =
-        let ports = movingSymbol.PortMaps.Orientation
+        let ports = movingSymbol.PortMaps.Orientation //  Map<string,Edge> // Maps the port ids to which side of the component the port is on (Top, Left ...)
         let wires = model.Wire.Wires
-        let portMap = model.Wire.Symbol.Ports
+        let portMap = model.Wire.Symbol.Ports // Map<string,Port> // Contains all the input and output ports in the model (currently rendered)
         let symbolMap = model.Wire.Symbol.Symbols
-                    
+
+        // If any wire's input/output port on the sheet matches the pId, find the corresponding output/input port of the wire (finding
+        // the connected port)
         let getAllConnectedPorts (pId:string) =
             wires
             |> Map.toArray 
@@ -182,36 +184,39 @@ let getNewSymbolSnapInfo
                     match wire.OutputPort with | OutputPortId pId' -> [|portMap[pId']|]
                 else
                     [||])
-        ports
+        ports // All ports of the moving symbol with what side/edge they are on
         |> Map.toArray
-        |> Array.collect (fun (pId,edge) ->
-            let portLocOffset = Symbol.getPortLocation None model.Wire.Symbol pId - movingSymbolCentre
-            getAllConnectedPorts pId
-            |> Array.collect (fun port ->
-                let symbol = symbolMap[ComponentId port.HostId]
-                let otherPortLoc = Symbol.getPortLocation None model.Wire.Symbol port.Id
-                match symbol.PortMaps.Orientation[port.Id], edge with
+        |> Array.collect (fun (pId,edge) -> // For each (port, side/edge) of moving symbol ...
+            let portLocOffset = (Symbol.getPortLocation None model.Wire.Symbol pId) - movingSymbolCentre // distance between moveSymbol center and port
+            getAllConnectedPorts pId // Finds all other ports connected to this port
+            |> Array.collect (fun port -> // For each connected port ...
+                let symbol = symbolMap[ComponentId port.HostId] // Find the host/symbol holding that connected port
+                let otherPortLoc = Symbol.getPortLocation None model.Wire.Symbol port.Id // Get the other connected port's location
+                match symbol.PortMaps.Orientation[port.Id], edge with // match (get the other connected port's orientation/side of its symbol, edge) with:
                 | Edge.Left, Edge.Right | Edge.Right, Edge.Left -> 
-                    let locDataY = {|Pos = otherPortLoc.Y - portLocOffset.Y; IndicatorPos = otherPortLoc.Y|}
+                    let locDataY = {|Pos = otherPortLoc.Y - portLocOffset.Y; IndicatorPos = otherPortLoc.Y|} // (otherPortLoc - offset) is snap
                     [|BusWireT.Horizontal, locDataY|]
                 | Edge.Top, Edge.Bottom | Edge.Bottom, Edge.Top -> 
-                    let locDataX = {|Pos = otherPortLoc.X - portLocOffset.X; IndicatorPos = otherPortLoc.X|}
+                    let locDataX = {|Pos = otherPortLoc.X - portLocOffset.X; IndicatorPos = otherPortLoc.X|} // (otherPortLoc - offset) is snap
                     [|BusWireT.Vertical, locDataX|]
-                | _ -> [||]))
+                | _ -> [||])) // If no match (e.g top, right) then ignore as we can't make any snaps
+        // Returned above is an array of ALL (Vertical/Horizontal, Position of possible snaps with moving snaps with moving symbol)
         |> Array.partition (fun (ori,_) -> ori = BusWireT.Horizontal)
+        // Array.partition splits the it into (horizontal snaps, vertical snaps)
         |> (fun (horizL,vertL) ->
             let makeSnap =  Array.map snd             
-            {| YSnaps = makeSnap horizL; XSnaps = makeSnap vertL |})            
+            {| YSnaps = makeSnap horizL; XSnaps = makeSnap vertL |}) 
+        // Return 1 final record of {YSnaps = [Array of horizontal snaps]; XSnaps = [Array of vertical snaps]}
 
     {
         SnapX = {
                     SnapData = 
-                        Array.append (otherSimilarSymbolData posToX) portSnapData.XSnaps
+                        Array.append (otherSimilarSymbolData posToX) portSnapData.XSnaps // Appends [otherSymbol centers xpos] with [xpos port snaps]
                         |> makeSnapBounds Constants.symbolSnapLimit
                     SnapOpt = None}
         SnapY = { 
                     SnapData = 
-                        Array.append (otherSimilarSymbolData posToY) portSnapData.YSnaps
+                        Array.append (otherSimilarSymbolData posToY) portSnapData.YSnaps // Appends [otherSymbol centers ypos] with [ypos port snaps]
                         |> makeSnapBounds Constants.symbolSnapLimit
                     SnapOpt = None}
     }
@@ -230,31 +235,31 @@ let getNewSegmentSnapInfo
         (model: Model) 
         (movingSegmentL: BusWireT.ASegment list) 
             : SnapXY =
-    match movingSegmentL with
+    match movingSegmentL with // List of wire segments being moved (a wire is composed of many segments)
     | [] -> emptySnap
-    | movingSegment :: _ -> 
+    | movingSegment :: _ -> // Grab 1 of the moving wire segment
         /// Is seg Horizontal or Vertical? Returns None if segments is zero length
         let getDir (seg: BusWireT.ASegment) = BusWire.getSegmentOrientationOpt seg.Start seg.End
 
-        let thisWire = model.Wire.Wires[movingSegment.Segment.WireId]
-        let thisSegId = movingSegment.Segment.GetId
-        let orientation = getDir movingSegment
+        let thisWire = model.Wire.Wires[movingSegment.Segment.WireId] // Grab the wire that this segment is in
+        let thisSegId = movingSegment.Segment.GetId // Grab the id of the segment
+        let orientation = getDir movingSegment // Grab the direction of the segment (Vertical or Horizontal)
         let snapBounds = 
             match orientation with
             | None ->
                 [||] // probably this should never happen, since we cannot move 0 length segments by dragging
             | Some ori ->
-                model.Wire.Wires
-                |> Map.filter (fun wid otherWire -> otherWire.OutputPort = thisWire.OutputPort)
+                model.Wire.Wires // All the wires in the sheet
+                |> Map.filter (fun wid otherWire -> otherWire.OutputPort = thisWire.OutputPort) // All wires that are connected to the same port
                 |> Map.toArray
-                |> Array.map snd
-                |> Array.collect (getNonZeroAbsSegments >> List.toArray)
+                |> Array.map snd // Take only the Wire (don't need the fst connectionId from Map)
+                |> Array.collect (getNonZeroAbsSegments >> List.toArray) // Convert all those wires into an array of segments
                 |> Array.collect (function | aSeg when getDir aSeg = Some ori  && aSeg.Segment.GetId <> thisSegId-> 
-                                                [|BusWire.getFixedCoord aSeg|] 
+                                                [|BusWire.getFixedCoord aSeg|] // get the start position (x or y) of each segments
                                            | _ -> 
                                                 [||])
-                |> Array.map (fun x -> {|Pos=x; IndicatorPos=x|})
-                |> makeSnapBounds Constants.segmentSnapLimit
+                |> Array.map (fun x -> {|Pos=x; IndicatorPos=x|}) // Map each the start positions as snaps
+                |> makeSnapBounds Constants.segmentSnapLimit // Create the snap bounds out of those snaps
 
         let snapInDirection snapOrientation =   
             {
@@ -263,7 +268,7 @@ let getNewSegmentSnapInfo
             }       
         
         {
-            SnapX = snapInDirection BusWireT.Vertical
+            SnapX = snapInDirection BusWireT.Vertical // One will have the snaps, the other will be [||] depending on thisMovingSegment orientation
             SnapY = snapInDirection BusWireT.Horizontal        
         }
 
@@ -285,7 +290,7 @@ let snap1D
     /// return the snap info if pos should be snapped to d, otehrwise None
     let mustSnap (pos: float) (d: SnapData) =
         if (not autoScrolling) && pos > d.LowerLimit && pos < d.UpperLimit then 
-            Some {UnSnapPosition = pos; SnapPosition = d.Snap; SnapIndicatorPos = d.IndicatorPos}
+            Some {UnSnapPosition = pos; SnapPosition = d.Snap; SnapIndicatorPos = d.IndicatorPos} // Snap because pos in between lower and upper limit
         else
             None        
     /// the position to which the symbol should move if it is unsnapped
@@ -296,12 +301,12 @@ let snap1D
         |> Option.map (fun snap -> snap.UnSnapPosition)
         |> Option.defaultValue pos.ActualPosition 
     let data = snapI.SnapData
-    let newUnSnapPosition = unSnapPosition + pos.MouseDelta
+    let newUnSnapPosition = unSnapPosition + pos.MouseDelta //pos.ActualPosition + pos.MouseDelta
 
     let newSnap, newPosition =
         match Array.tryPick (mustSnap newUnSnapPosition) data with
-        | Some snapPos -> Some snapPos, snapPos.SnapPosition
-        | None -> None, newUnSnapPosition
+        | Some snapPos -> Some snapPos, snapPos.SnapPosition // Snap is snap exists
+        | None -> None, newUnSnapPosition // Otherwise keep the unsnapped position
 
     {snapI with SnapOpt = newSnap}, newPosition - pos.ActualPosition
  
@@ -342,11 +347,9 @@ let snap2DSegment
     let newSnapXY, newDeltaXY =
         match ori with
         | BusWireT.Horizontal -> 
-            let snapY,delta = snap1D autoScrolling {|MouseDelta = deltaXY.Y; ActualPosition = fixedCoord|} snapXY.SnapY
+            let snapY,delta = snap1D autoScrolling {|MouseDelta = deltaXY.Y; ActualPosition = fixedCoord|} snapXY.SnapY // Snap in x direction
             {snapXY with SnapY=snapY}, {deltaXY with Y = delta}
         | BusWireT.Vertical -> 
-            let snapX,delta = snap1D autoScrolling {|MouseDelta = deltaXY.X; ActualPosition = fixedCoord|} snapXY.SnapX
+            let snapX,delta = snap1D autoScrolling {|MouseDelta = deltaXY.X; ActualPosition = fixedCoord|} snapXY.SnapX // Snap in y direction
             {snapXY with SnapX=snapX}, {deltaXY with X = delta}
     newSnapXY, newDeltaXY
-    
-    

@@ -46,8 +46,10 @@
     type Gen<'a> = {Data: int -> 'a; Size: int32}
 
     let fromList (l: 'a list) =
-        {Data=(fun i -> l[i % l.Length]); Size= l.Length}
-
+        {Data=(fun i -> l[i % l.Length]); Size= l.Length} 
+    // Returns Record:
+    // Data = function that takes i(index) that returns l[i] basically
+    // Size = size of list l
 
     let fromArray (l: 'a array) =
         {Data=(fun i -> l[i % l.Length]); Size= l.Length}
@@ -69,6 +71,9 @@
     /// Map the sequence elemntwise
     let map (f: 'a -> 'b) (g1: Gen<'a>) : Gen<'b> =
         {Data = (fun i -> g1.Data i |> f); Size = g1.Size}
+    // Returns Record:
+    // Data = another function that returns l[i] and feeds it into f (for horizLinePositions, it adds l[i] to middleOfSheet)
+    // Size = size of list l
 
     /// Map two sequences elementwise to make a third using f (e.g. this could zip two sequences together)
     let map2 (f: 'a1 -> 'a2 -> 'b) (g1: Gen<'a1>) (g2: Gen<'a2>) : Gen<'b> =

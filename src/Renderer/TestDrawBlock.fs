@@ -48,18 +48,19 @@ module TestLib =
     /// The return list contains all failures or exceptions: empty list => everything has passed.
     /// This will always run to completion: use truncate if text.Samples.Size is too large.
     let runTests (test: Test<'a>) : TestResult<'a>  =
-        [test.StartFrom..test.Samples.Size - 1]
-        |> List.map (fun n ->
+        [test.StartFrom..test.Samples.Size - 1] // e.g 11 tests means [0 .. 10]
+        |> List.map (fun n -> // For each sample ... 
                 catchException $"generating test {n} from {test.Name}" test.Samples.Data n
-                |> (fun res -> n,res)
-           )           
+                |> (fun res -> n,res) 
+           )  
+        // Returns a tuple list e.g [0, Ok(test.Samples.Data ) ; 1, Ok(test.Samples.Data 1) ; 2, Ok(test.Samples.Data 2) ; ....]         
         |> List.collect (function
-                            | n, Error mess -> [n, Exception mess]
-                            | n, Ok sample ->
+                            | n, Error mess -> [n, Exception mess] // If Error, then return the error and message
+                            | n, Ok sample -> // If Ok, then test the sample
                                 match catchException $"'test.Assertion' on test {n} from 'runTests'" (test.Assertion n) sample with
-                                | Ok None -> []
-                                | Ok (Some failure) -> [n,Fail failure]
-                                | Error (mess) -> [n,Exception mess])
+                                | Ok None -> [] // shouldnt be possible
+                                | Ok (Some failure) -> [n,Fail failure] // test sample failed
+                                | Error (mess) -> [n,Exception mess]) // test sample error
         |> (fun resL ->                
                 {
                     TestName = test.Name
@@ -164,6 +165,7 @@ module HLPTick3 =
         wire.Segments
         |> List.mapi getSegmentVector
         |> (fun segVecs ->
+
                 (segVecs,[1..segVecs.Length-2])
                 ||> List.fold tryCoalesceAboutIndex)
 
@@ -172,14 +174,6 @@ module HLPTick3 =
 //------------------------------functions to build issue schematics programmatically--------------------------------------//
 //------------------------------------------------------------------------------------------------------------------------//
     module Builder =
-
-
-                
-
-            
-
-
-
         /// Place a new symbol with label symLabel onto the Sheet with given position.
         /// Return error if symLabel is not unique on sheet, or if position is outside allowed sheet coordinates (0 - maxSheetCoord).
         /// To be safe place components close to (maxSheetCoord/2.0, maxSheetCoord/2.0).
@@ -236,12 +230,41 @@ module HLPTick3 =
         
 
         // Rotate a symbol
-        let rotateSymbol (symLabel: string) (rotate: Rotation) (model: SheetT.Model) : (SheetT.Model) =
-            failwithf "Not Implemented"
+        let rotateSymbol (symLabel: string) (rotate: Rotation) (model: SheetT.Model) : Result<SheetT.Model, string> =
+            let symModel = (fst symbolModel_) model
+            let symId = symModel.Symbols
+                        |> Map.toList
+                        |> List.tryFind (fun (id, sym) -> sym.Component.Label = symLabel)
+                        |> Option.map (fun (id, sym) -> id)
+            match symId with
+            | None -> 
+                Error $"symbol '{symLabel}' could not be found"
+            | Some symId -> 
+                let transform = SymbolResizeHelpers.rotateSymbol rotate
+                //let symModelNew = SymbolUpdate.transformSymbols transform symModel [symId]
+                let symModelNew = SymbolUpdate.updateSymbol transform symId symModel
+                model
+                |> Optic.set symbolModel_ symModelNew
+                |> SheetUpdate.updateBoundingBoxes // could optimise this by only updating symId bounding boxes
+                |> Ok
 
         // Flip a symbol
-        let flipSymbol (symLabel: string) (flip: SymbolT.FlipType) (model: SheetT.Model) : (SheetT.Model) =
-            failwithf "Not Implemented"
+        let flipSymbol (symLabel: string) (flip: SymbolT.FlipType) (model: SheetT.Model) : Result<SheetT.Model, string> =
+            let symModel = (fst symbolModel_) model
+            let symId = symModel.Symbols
+                        |> Map.toList
+                        |> List.tryFind (fun (id, sym) -> sym.Component.Label = symLabel)
+                        |> Option.map (fun (id, sym) -> id)
+            match symId with
+            | None -> 
+                Error $"symbol '{symLabel}' could not be found"
+            | Some symId -> 
+                let transform = SymbolResizeHelpers.flipSymbol flip
+                let symModelNew = SymbolUpdate.updateSymbol transform symId symModel
+                model
+                |> Optic.set symbolModel_ symModelNew
+                |> SheetUpdate.updateBoundingBoxes // could optimise this by only updating symId bounding boxes
+                |> Ok
 
         /// Add a (newly routed) wire, source specifies the Output port, target the Input port.
         /// Return an error if either of the two ports specified is invalid, or if the wire duplicates and existing one.
@@ -304,8 +327,8 @@ module HLPTick3 =
             let generateAndCheckSheet n = sheetMaker >> sheetChecker n
             let result =
                 {
-                    Name=name;
-                    Samples=samples;
+                    Name = name;
+                    Samples = samples;
                     StartFrom = sampleToStartFrom
                     Assertion = generateAndCheckSheet
                 }
@@ -326,18 +349,62 @@ module HLPTick3 =
     open Builder
     /// Sample data based on 11 equidistant points on a horizontal line
     let horizLinePositions =
-        fromList [-100..20..100]
+        //fromList [-100..20..100]
+        fromList [-100..20..100]        
         |> map (fun n -> middleOfSheet + {X=float n; Y=0.})
+
+    let rectanglePositions = 
+        (fromList [-75..25..75], fromList [-75..25..75])
+        ||> product (fun n m -> middleOfSheet + {X=float n; Y=0.} + {X=0.; Y=float m})
+
+    let rectangleAnglePositions =
+        let angleToRotation = function
+                              | n when n % 360 = 0 -> Degree0
+                              | n when n % 360 = 90 -> Degree90 
+                              | n when n % 360 = 180 -> Degree180
+                              | n when n % 360 = 270 -> Degree270 
+                              | _ -> failwithf "Rotation not possible" // Shouldn't be possible
+        let rotations = (randomInt 0 90 1350) 
+                        |> map (fun angle -> angleToRotation angle)
+        (rectanglePositions, rotations)
+        ||> map2 (fun pos angle -> (pos, angle)) 
+
+    let rectangleFlipPositions =
+        let flipToRotation = function
+                              | n when n % 2 = 0 -> SymbolT.FlipHorizontal
+                              | n when n % 2 = 1 -> SymbolT.FlipVertical
+                              | _ -> failwithf "Flip not possible" // Shouldn't be possible
+        let flips = (randomInt 0 1 10) 
+                        |> map (fun flip -> flipToRotation flip)
+        (rectanglePositions, flips)
+        ||> map2 (fun pos flip -> (pos, flip)) 
 
     /// demo test circuit consisting of a DFF & And gate
     let makeTest1Circuit (andPos:XYPos) =
         initSheetModel
         |> placeSymbol "G1" (GateN(And,2)) andPos
-        |> Result.bind (placeSymbol "FF1" DFF middleOfSheet)
-        |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0))
-        |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
+        |> Result.bind (placeSymbol "FF1" DFF middleOfSheet) // Runs each of these binds which will run the function in brackets.
+        |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0)) // If successful then continue.
+        |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) ) // If fail then return error
+        |> getOkOrFail
+    
+    let makeTest6Circuit (andPos: XYPos, rotate: Rotation) = 
+        initSheetModel
+        |> placeSymbol "G1" (GateN(And,2)) andPos
+        |> Result.bind (placeSymbol "FF1" DFF middleOfSheet) // Runs each of these binds which will run the function in brackets.
+        |> Result.bind (rotateSymbol "G1" rotate)
+        |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0)) // If successful then continue.
+        |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) ) // If fail then return error
         |> getOkOrFail
 
+    let makeTest7Circuit (andPos: XYPos, flip: SymbolT.FlipType) = 
+        initSheetModel
+        |> placeSymbol "G1" (GateN(And,2)) andPos
+        |> Result.bind (placeSymbol "FF1" DFF middleOfSheet) // Runs each of these binds which will run the function in brackets.
+        |> Result.bind (flipSymbol "G1" flip)
+        |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0)) // If successful then continue.
+        |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) ) // If fail then return error
+        |> getOkOrFail
 
 
 //------------------------------------------------------------------------------------------------//
@@ -381,6 +448,12 @@ module HLPTick3 =
             |> List.exists (fun ((n1,box1),(n2,box2)) -> (n1 <> n2) && BlockHelpers.overlap2DBox box1 box2)
             |> (function | true -> Some $"Symbol outline intersects another symbol outline in Sample {sample}"
                          | false -> None)
+
+        let failOnWireIntersectsSymbolFiltered (sample: int) (sheet: SheetT.Model) =
+            match (failOnSymbolIntersectsSymbol sample sheet), (failOnWireIntersectsSymbol sample sheet) with
+            | Some err, _ -> None // ignore if symbol-symbol intersection
+            | None, Some err -> Some err // return the error if only wire-symbol intersection
+            | None, None -> None
 
 
 
@@ -446,6 +519,39 @@ module HLPTick3 =
                 dispatch
             |> recordPositionInTest testNum dispatch
 
+        let test5 testNum firstSample dispatch =
+            runTestOnSheets
+                "Rectangle positioned AND + DFF: fail on wire-symbol intersects"
+                firstSample
+                rectanglePositions
+                makeTest1Circuit
+                //Asserts.failOnAllTests
+                Asserts.failOnWireIntersectsSymbolFiltered
+                dispatch
+            |> recordPositionInTest testNum dispatch
+
+        let test6 testNum firstSample dispatch =
+            runTestOnSheets
+                "Rectangle positioned AND + DFF: fail on wire-symbol intersects with random rotations"
+                firstSample
+                rectangleAnglePositions
+                makeTest6Circuit
+                //Asserts.failOnAllTests
+                Asserts.failOnWireIntersectsSymbolFiltered
+                dispatch
+            |> recordPositionInTest testNum dispatch
+
+        let test7 testNum firstSample dispatch =
+            runTestOnSheets
+                "Rectangle positioned AND + DFF: fail on wire-symbol intersects with random rotations"
+                firstSample
+                rectangleFlipPositions
+                makeTest7Circuit
+                //Asserts.failOnAllTests
+                Asserts.failOnWireIntersectsSymbolFiltered
+                dispatch
+            |> recordPositionInTest testNum dispatch
+
         /// List of tests available which can be run ftom Issie File Menu.
         /// The first 9 tests can also be run via Ctrl-n accelerator keys as shown on menu
         let testsToRunFromSheetMenu : (string * (int -> int -> Dispatch<Msg> -> Unit)) list =
@@ -455,10 +561,10 @@ module HLPTick3 =
                 "Test1", test1 // example
                 "Test2", test2 // example
                 "Test3", test3 // example
-                "Test4", test4 
-                "Test5", fun _ _ _ -> printf "Test5" // dummy test - delete line or replace by real test as needed
-                "Test6", fun _ _ _ -> printf "Test6"
-                "Test7", fun _ _ _ -> printf "Test7"
+                "Test4", test4 // example
+                "Test5", test5 // dummy test - delete line or replace by real test as needed
+                "Test6", test6
+                "Test7", test7
                 "Test8", fun _ _ _ -> printf "Test8"
                 "Next Test Error", fun _ _ _ -> printf "Next Error:" // Go to the nexterror in a test
 
@@ -486,8 +592,3 @@ module HLPTick3 =
             | _ ->
                 func testIndex 0 dispatch
         
-
-
-    
-
-

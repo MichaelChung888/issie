@@ -57,7 +57,7 @@ let adjustPosForRotation
     let posOffset =
         match rotation with
         | Degree90 | Degree270 -> { X = (float)w/2.0 - (float) h/2.0 ;Y = (float) h/2.0 - (float)w/2.0 }
-        | _ ->  failwithf "Can't encounter Degree0 or Degree180 here in SymbolResizeHelpers/adjustPosForRotation function"
+        | _ -> {X = 0.; Y = 0.}
     pos - posOffset
 
 
@@ -87,11 +87,11 @@ let rotateSymbol (rotation: Rotation) (sym: Symbol) : Symbol =
                 {sym.STransform with Rotation = combineRotation rotation sym.STransform.Rotation}
         { sym with 
             Pos = newPos;
-            PortMaps = rotatePortInfo rotation sym.PortMaps
-            STransform = newSTransform 
-            LabelHasDefaultPos = true
-            Component = newComponent
-        } |> calcLabelBoundingBox
+            PortMaps = rotatePortInfo rotation sym.PortMaps;
+            STransform = newSTransform;
+            LabelHasDefaultPos = true;
+            Component = newComponent;
+        } |> calcLabelBoundingBox;
 
 let rec rotateAntiClockByAng (rotAngle: Rotation) (sym: Symbol) : Symbol =
     match rotAngle with
